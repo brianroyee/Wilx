@@ -105,43 +105,5 @@ This tool exposes operations that can disrupt your system (killing processes, te
 Contributions welcome. Create issues or PRs that add commands, tests, or documentation updates. Keep changes small and add tests when behavior changes.
 
 ## License
+GNU GENERAL PUBLIC LICENSE V3
 
-This project is provided as-is. Add your preferred license if you intend to redistribute.
-
-# Wilx — Minimal GNU-like CLI tools for Windows (MVP)
-
-Wilx is a small, modular project that provides familiar GNU/Linux-style
-commands for users working in Windows CMD/PowerShell. The MVP includes a
-tiny shell (`shell.py`) and an example `ls` command module in `core/`.
-
-Quick start
-
-1. Create and activate a Python virtual environment (Windows PowerShell):
-
-   python -m venv .venv; .\.venv\Scripts\Activate.ps1
-
-2. Run the shell from the project root:
-
-   python shell.py
-
-3. Try commands:
-
-   ls
-   ls -l
-   ls -a
-
-Design
-
-- Top-level `shell.py` is a REPL that dynamically imports `core.<cmd>` modules.
-- Each `core` module must provide `execute(args: list[str])` and handle
-  its own argument parsing (using argparse or similar).
-- The project uses only the Python standard library.
-
-Extending
-
-Add a new command by creating `core/<name>.py` with an `execute(args)`
-function. The shell will discover it automatically.
-
-License
-
-Public domain / permissive for learning and experimentation.
