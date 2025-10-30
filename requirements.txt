@@ -1,0 +1,9 @@
+# Recommended dependency for full-screen curses on Windows
+# Install with: pip install windows-curses
+windows-curses
+
+# No other external requirements for MVP — uses Python standard library only.
+
+# Optional: include PyInstaller for building standalone Windows executables
+# Install with: pip install pyinstaller
+pyinstaller
