@@ -1,0 +1,2 @@
+{"time": 1761877641, "pid": 16328, "name": "ProtonVPN.Client.exe", "signal": "TERM", "force": false}
+{"time": 1762018554, "pid": 7660, "name": "chrome.exe", "signal": "KILL", "force": false}

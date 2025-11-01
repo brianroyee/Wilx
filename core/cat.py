@@ -49,8 +49,12 @@ def execute(args: List[str]) -> int:
 
     # if no files given, read from stdin
     if not ns.paths:
-        data = sys.stdin.buffer.read()
-        sys.stdout.buffer.write(data)
+        # stream stdin in chunks to avoid loading everything into memory
+        while True:
+            chunk = sys.stdin.buffer.read(8192)
+            if not chunk:
+                break
+            sys.stdout.buffer.write(chunk)
         return 0
 
     exit_code = 0

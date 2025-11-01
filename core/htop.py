@@ -114,8 +114,9 @@ def _snapshot_windows(top: int = 8) -> None:
     except Exception:
         pass
 
-    # Memory
+    # Memory - calculate total_mb once for reuse
     mem_line = '(memory info not available)'
+    total_mb = None
     try:
         out = subprocess.check_output(['wmic', 'OS', 'get', 'FreePhysicalMemory,TotalVisibleMemorySize', '/Value'], stderr=subprocess.DEVNULL)
         txt = out.decode(errors='ignore')
@@ -130,7 +131,7 @@ def _snapshot_windows(top: int = 8) -> None:
         if total is not None and free is not None:
             used_k = total - free
             used_mb = used_k // 1024
-            total_mb = total // 1024
+            total_mb = total // 1024  # Store for reuse in process percentage calculation
             percent = round((used_k / total) * 100, 1) if total else 0
             mem_line = f'Memory: {used_mb}MB / {total_mb}MB ({percent}%)'
     except Exception:
@@ -155,19 +156,7 @@ def _snapshot_windows(top: int = 8) -> None:
         print('No process information available')
         return
 
-    # compute total memory in MB if available to show percentage
-    total_mb = None
-    try:
-        out = subprocess.check_output(['wmic', 'OS', 'get', 'TotalVisibleMemorySize', '/Value'], stderr=subprocess.DEVNULL)
-        txt = out.decode(errors='ignore')
-        for ln in txt.splitlines():
-            if '=' in ln:
-                k, v = ln.split('=', 1)
-                if k.strip().lower() == 'totalvisiblememorysize':
-                    total_mb = int(v.strip()) // 1024
-                    break
-    except Exception:
-        total_mb = None
+    # total_mb was already calculated above during memory display, reuse it
 
     pid_w = max(3, max(len(str(r[0])) for r in rows))
     name_w = max(4, min(40, max(len(r[1]) for r in rows)))
@@ -181,133 +170,6 @@ def _snapshot_windows(top: int = 8) -> None:
     for pid, name, ptype, mem in rows:
         mempct = round((mem / total_mb) * 100, 1) if total_mb else 0.0
         print(f"{str(pid).rjust(pid_w)}  {name[:name_w].ljust(name_w)}  {ptype.ljust(type_w)}  {str(mem).rjust(mem_w)}  {str(mempct).rjust(mempct_w)}")
-
-
-    def _snapshot_windows_winapi(top: Optional[int] = 8) -> None:
-        """Enumerate processes using Win32 APIs (ctypes) and print PID/NAME/TYPE/MEM/MEM%.
-        Falls back to previous method on error.
-        """
-        kernel32 = ctypes.windll.kernel32
-        psapi = ctypes.windll.psapi
-
-        # helper: total physical memory
-        class _MEMORYSTATUSEX(ctypes.Structure):
-            _fields_ = [
-                ('dwLength', wintypes.DWORD),
-                ('dwMemoryLoad', wintypes.DWORD),
-                ('ullTotalPhys', ctypes.c_uint64),
-                ('ullAvailPhys', ctypes.c_uint64),
-                ('ullTotalPageFile', ctypes.c_uint64),
-                ('ullAvailPageFile', ctypes.c_uint64),
-                ('ullTotalVirtual', ctypes.c_uint64),
-                ('ullAvailVirtual', ctypes.c_uint64),
-                ('sullAvailExtendedVirtual', ctypes.c_uint64),
-            ]
-
-        mems = _MEMORYSTATUSEX()
-        mems.dwLength = ctypes.sizeof(mems)
-        if not kernel32.GlobalMemoryStatusEx(ctypes.byref(mems)):
-            total_mb = None
-        else:
-            total_mb = int(mems.ullTotalPhys // (1024 * 1024))
-
-        # CreateToolhelp32Snapshot + PROCESSENTRY32
-        TH32CS_SNAPPROCESS = 0x00000002
-        class PROCESSENTRY32W(ctypes.Structure):
-            _fields_ = [
-                ('dwSize', wintypes.DWORD),
-                ('cntUsage', wintypes.DWORD),
-                ('th32ProcessID', wintypes.DWORD),
-                ('th32DefaultHeapID', ctypes.POINTER(ctypes.c_ulong)),
-                ('th32ModuleID', wintypes.DWORD),
-                ('cntThreads', wintypes.DWORD),
-                ('th32ParentProcessID', wintypes.DWORD),
-                ('pcPriClassBase', ctypes.c_long),
-                ('dwFlags', wintypes.DWORD),
-                ('szExeFile', wintypes.WCHAR * 260),
-            ]
-
-        CreateToolhelp32Snapshot = kernel32.CreateToolhelp32Snapshot
-        Process32FirstW = kernel32.Process32FirstW
-        Process32NextW = kernel32.Process32NextW
-
-        hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
-        if hSnap == wintypes.HANDLE(-1).value:
-            raise RuntimeError('CreateToolhelp32Snapshot failed')
-
-        entry = PROCESSENTRY32W()
-        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
-        res = Process32FirstW(hSnap, ctypes.byref(entry))
-        procs = []
-        while res:
-            try:
-                pid = int(entry.th32ProcessID)
-                name = entry.szExeFile
-                ppid = int(entry.th32ParentProcessID)
-                # session id: ProcessIdToSessionId
-                session_id = wintypes.DWORD()
-                try:
-                    kernel32.ProcessIdToSessionId(pid, ctypes.byref(session_id))
-                    sess = int(session_id.value)
-                except Exception:
-                    sess = -1
-
-                ptype = 'service' if sess == 0 else 'user'
-
-                # memory: open process and call GetProcessMemoryInfo
-                mem_mb = 0
-                try:
-                    PROCESS_QUERY_INFORMATION = 0x0400
-                    PROCESS_VM_READ = 0x0010
-                    hProc = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
-                    if hProc:
-                        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
-                            _fields_ = [
-                                ('cb', wintypes.DWORD),
-                                ('PageFaultCount', wintypes.DWORD),
-                                ('PeakWorkingSetSize', ctypes.c_size_t),
-                                ('WorkingSetSize', ctypes.c_size_t),
-                                ('QuotaPeakPagedPoolUsage', ctypes.c_size_t),
-                                ('QuotaPagedPoolUsage', ctypes.c_size_t),
-                                ('QuotaPeakNonPagedPoolUsage', ctypes.c_size_t),
-                                ('QuotaNonPagedPoolUsage', ctypes.c_size_t),
-                                ('PagefileUsage', ctypes.c_size_t),
-                                ('PeakPagefileUsage', ctypes.c_size_t),
-                            ]
-                        pmc = PROCESS_MEMORY_COUNTERS()
-                        pmc.cb = ctypes.sizeof(pmc)
-                        if psapi.GetProcessMemoryInfo(hProc, ctypes.byref(pmc), pmc.cb):
-                            mem_mb = int(pmc.WorkingSetSize // (1024 * 1024))
-                        kernel32.CloseHandle(hProc)
-                except Exception:
-                    mem_mb = 0
-
-                procs.append((pid, name, ptype, mem_mb))
-            except Exception:
-                pass
-            res = Process32NextW(hSnap, ctypes.byref(entry))
-
-        # sort by memory desc
-        procs.sort(key=lambda x: x[3], reverse=True)
-        iterable = procs if top is None else procs[:top]
-
-        # print table
-        if not iterable:
-            print('No process information available')
-            return
-
-        pid_w = max(3, max(len(str(r[0])) for r in iterable))
-        name_w = max(4, min(60, max(len(r[1]) for r in iterable)))
-        type_w = max(4, max(len(r[2]) for r in iterable))
-        mem_w = max(7, max(len(str(r[3])) for r in iterable) + 3)
-        mempct_w = 6
-
-        hdr = f"{'PID'.rjust(pid_w)}  {'NAME'.ljust(name_w)}  {'TYPE'.ljust(type_w)}  {'MEM(MB)'.rjust(mem_w)}  {'MEM%'.rjust(mempct_w)}"
-        print(hdr)
-        print('-' * len(hdr))
-        for pid, name, ptype, mem in iterable:
-            mempct = round((mem / total_mb) * 100, 1) if total_mb else 0.0
-            print(f"{str(pid).rjust(pid_w)}  {name[:name_w].ljust(name_w)}  {ptype.ljust(type_w)}  {str(mem).rjust(mem_w)}  {str(mempct).rjust(mempct_w)}")
 
 
 def _snapshot_unix(top: int = 8) -> None:

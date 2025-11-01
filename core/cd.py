@@ -7,22 +7,18 @@ If PATH is omitted, change to the user's home directory.
 from __future__ import annotations
 
 import os
-import argparse
 import sys
 from typing import List
 
 
 def execute(args: List[str]) -> int:
-    parser = argparse.ArgumentParser(prog='cd', add_help=False)
-    parser.add_argument('path', nargs='?', default=None)
-    parser.add_argument('-h', '--help', action='store_true', dest='show_help')
-
-    ns = parser.parse_args(args)
-    if ns.show_help:
-        parser.print_help()
+    # Simplified argument parsing for simple command
+    if args and args[0] in ('-h', '--help'):
+        print('Usage: cd [PATH]')
+        print('Change the current directory to PATH (defaults to home directory).')
         return 0
 
-    target = ns.path or os.path.expanduser('~')
+    target = args[0] if args else os.path.expanduser('~')
     try:
         os.chdir(target)
     except FileNotFoundError:

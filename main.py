@@ -3,9 +3,8 @@
 Provides a small centralized dispatcher that supports global flags
 and forwards subcommands to `core.<command>.execute(args)`.
 
-If no command is given the interactive shell is started (prefer the
-project-level `shell.repl` if present, otherwise fall back to
-`core.shell.start_shell`).
+If no command is given the interactive shell is started (uses the
+project-level `shell.repl`).
 """
 from __future__ import annotations
 
@@ -14,27 +13,20 @@ import importlib
 import sys
 from typing import List
 
-
-def _list_commands() -> List[str]:
-    # prefer top-level `shell.py`'s discovery if available
-    try:
-        shell = importlib.import_module('shell')
-        if hasattr(shell, 'list_core_commands'):
-            return shell.list_core_commands()
-    except Exception:
-        pass
-    try:
-        core_shell = importlib.import_module('core.shell')
-        if hasattr(core_shell, 'list_core_commands'):
-            return core_shell.list_core_commands()
-    except Exception:
-        pass
-    return []
+from utils.helpers import list_core_commands as _list_commands
 
 
 def _run_subcommand(cmd: str, args: List[str]) -> int:
+    # cache imported command modules to avoid reloading on repeated calls
+    if not hasattr(_run_subcommand, '_module_cache'):
+        _run_subcommand._module_cache = {}
+    cache = _run_subcommand._module_cache
+
     try:
-        module = importlib.import_module(f'core.{cmd}')
+        module = cache.get(cmd)
+        if module is None:
+            module = importlib.import_module(f'core.{cmd}')
+            cache[cmd] = module
     except ModuleNotFoundError:
         print(f"wilx: {cmd}: command not found", file=sys.stderr)
         return 127
@@ -85,19 +77,11 @@ def main(argv: List[str] | None = None) -> int:
         return _run_subcommand(ns.cmd, ns.args)
 
     # No command -> start interactive shell
-    # Prefer top-level `shell.repl`, else try core.shell.start_shell
+    # Use top-level `shell.repl`
     try:
         shell = importlib.import_module('shell')
         if hasattr(shell, 'repl'):
             return shell.repl()
-    except Exception:
-        pass
-
-    try:
-        core_shell = importlib.import_module('core.shell')
-        if hasattr(core_shell, 'start_shell'):
-            core_shell.start_shell()
-            return 0
     except Exception:
         pass
 

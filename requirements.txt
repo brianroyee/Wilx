@@ -2,6 +2,20 @@
 # Install with: pip install windows-curses
 windows-curses
 
+# Optional dependencies for Windows-exclusive features:
+
+# For better clipboard support (clipboard command)
+# Install with: pip install pywin32
+# Note: ctypes fallback is available if pywin32 is not installed
+
+# For Windows notifications (notify command)
+# Install with: pip install win10toast
+win10toast
+
+# For Windows Search Index (search command)
+# Install with: pip install pywin32
+# Note: Basic fallback is available if pywin32 is not installed
+
 # No other external requirements for MVP — uses Python standard library only.
 
 # Optional: include PyInstaller for building standalone Windows executables

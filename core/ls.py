@@ -61,19 +61,24 @@ def _get_owner_group(st):
         return '', ''
 
 
-def _print_columns(entries: List[str]) -> None:
+def _print_columns(entries: List[str], term_width: int = None) -> None:
     """Print entries in neat columns that fit the terminal width.
 
     Algorithm: choose the number of columns so that each column width
     (max name length + padding) fits into terminal width. Fill rows
     top-to-bottom like GNU ls.
+    
+    Args:
+        entries: List of entry names to display
+        term_width: Terminal width in columns (will be detected if None)
     """
     if not entries:
         return
-    term = shutil.get_terminal_size((80, 20)).columns
+    if term_width is None:
+        term_width = shutil.get_terminal_size((80, 20)).columns
     maxlen = max(len(e) for e in entries)
     col_width = maxlen + 2
-    cols = max(1, term // col_width)
+    cols = max(1, term_width // col_width)
     rows = math.ceil(len(entries) / cols)
 
     # build grid
@@ -118,6 +123,12 @@ def execute(args: List[str]) -> int:
         parser.print_help()
         return 0
 
+    # Cache terminal width once per command execution
+    try:
+        term_width = shutil.get_terminal_size((80, 20)).columns
+    except Exception:
+        term_width = 80
+
     exit_code = 0
     for target in ns.paths:
         # If multiple paths provided, print header like GNU ls does
@@ -126,8 +137,20 @@ def execute(args: List[str]) -> int:
 
         try:
             if os.path.isdir(target):
-                entries = os.listdir(target)
+                # Use os.scandir() for better performance, filtering during iteration
                 base = target
+                entries = []
+                try:
+                    with os.scandir(target) as it:
+                        for entry in it:
+                            name = entry.name
+                            if ns.all or not name.startswith('.'):
+                                entries.append(name)
+                except Exception:
+                    # Fallback to os.listdir if scandir fails
+                    entries = os.listdir(target)
+                    if not ns.all:
+                        entries = [e for e in entries if not e.startswith('.')]
             else:
                 # path is a file — show that single entry
                 entries = [os.path.basename(target)]
@@ -140,10 +163,6 @@ def execute(args: List[str]) -> int:
             print(f"ls: cannot open directory '{target}': Permission denied", file=sys.stderr)
             exit_code = 2
             continue
-
-        # filter hidden files unless -a
-        if not ns.all:
-            entries = [e for e in entries if not e.startswith('.')]
 
         entries.sort()
 
@@ -179,7 +198,7 @@ def execute(args: List[str]) -> int:
                 print(f"{mode} {str(nlink).rjust(col_nlink)} {owner_field} {group_field} {str(size).rjust(col_size)} {mtime} {name}")
         else:
             # pretty column output
-            _print_columns(entries)
+            _print_columns(entries, term_width)
 
         # print a blank line between multiple targets
         if len(ns.paths) > 1:

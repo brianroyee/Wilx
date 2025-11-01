@@ -8,26 +8,7 @@ import shlex
 import importlib
 from typing import List
 
-
-def list_core_commands() -> List[str]:
-    """Return a sorted list of available command module names in `core/`.
-
-    This scans the `core` package directory for .py files (ignoring
-    __init__.py and private files starting with underscore).
-    """
-    core_dir = os.path.join(os.path.dirname(__file__), 'core')
-    cmds = []
-    try:
-        for fname in os.listdir(core_dir):
-            if not fname.endswith('.py'):
-                continue
-            if fname == '__init__.py' or fname.startswith('_'):
-                continue
-            cmds.append(os.path.splitext(fname)[0])
-    except Exception:
-        # If the package isn't present or readable, return empty list.
-        return []
-    return sorted(cmds)
+from utils.helpers import list_core_commands
 
 
 def parse_command(s: str) -> List[str]:
@@ -35,25 +16,35 @@ def parse_command(s: str) -> List[str]:
 
     On Windows backslashes are common in paths and POSIX-style shlex
     parsing may raise ValueError when it encounters an incomplete escape.
-    We try a couple of modes and fall back to a naive split.
+    We try POSIX mode first, then non-POSIX mode on Windows, then fall back to naive split.
     """
-    orders = [True]
-    if os.name == 'nt':
-        orders = [False, True]
-    for posix_mode in orders:
-        try:
-            toks = shlex.split(s, posix=posix_mode)
-            # Normalize tokens: if a token is quoted when parsed in non-posix
-            # mode it may retain quotes, so strip matching surrounding quotes.
-            norm = []
-            for t in toks:
-                if len(t) >= 2 and ((t[0] == t[-1]) and t[0] in ('"', "'")):
-                    norm.append(t[1:-1])
-                else:
-                    norm.append(t)
-            return norm
-        except ValueError:
-            continue
+    # Try POSIX mode first (most common)
+    try:
+        toks = shlex.split(s, posix=True)
+        # Normalize tokens: strip matching surrounding quotes if present
+        norm = []
+        for t in toks:
+            if len(t) >= 2 and ((t[0] == t[-1]) and t[0] in ('"', "'")):
+                norm.append(t[1:-1])
+            else:
+                norm.append(t)
+        return norm
+    except ValueError:
+        # On Windows, try non-POSIX mode as fallback
+        if os.name == 'nt':
+            try:
+                toks = shlex.split(s, posix=False)
+                # Strip quotes that may have been retained
+                norm = []
+                for t in toks:
+                    if len(t) >= 2 and ((t[0] == t[-1]) and t[0] in ('"', "'")):
+                        norm.append(t[1:-1])
+                    else:
+                        norm.append(t)
+                return norm
+            except ValueError:
+                pass
+    # Final fallback: naive split
     return s.split()
 
 

@@ -14,7 +14,7 @@ import sys
 import argparse
 import signal
 import subprocess
-from typing import List
+from typing import List, Dict
 import csv
 import time
 import json
@@ -59,23 +59,80 @@ def _signal_to_int(sig: str) -> int:
         return mapping.get(s, signal.SIGTERM if hasattr(signal, 'SIGTERM') else 15)
 
 
-def _get_proc_name(pid: int) -> str:
-    """Return a best-effort process name for a PID (Windows via tasklist, Unix via ps)."""
+def _get_proc_names(pids: List[int]) -> Dict[int, str]:
+    """Return a dict mapping PID to process name for multiple PIDs (batched lookup).
+
+    On Windows, this batches all PIDs in a single tasklist call for efficiency.
+    On Unix, falls back to individual ps calls (could be optimized further).
+    """
+    result: dict[int, str] = {}
+    if not pids:
+        return result
+
     try:
         if os.name == 'nt':
-            out = subprocess.check_output(['tasklist', '/FO', 'CSV', '/NH', '/FI', f'PID eq {pid}'], stderr=subprocess.DEVNULL)
-            txt = out.decode(errors='ignore').strip()
-            if not txt:
-                return ''
-            parts = list(csv.reader(txt.splitlines()))
-            if parts and len(parts[0]) >= 1:
-                return parts[0][0].strip('"')
-            return ''
+            # Windows: batch all PIDs in one tasklist call
+            # Build filter expression for multiple PIDs
+            if len(pids) == 1:
+                filter_expr = f'PID eq {pids[0]}'
+            else:
+                # tasklist filter doesn't support OR directly, but we can get all processes
+                # and filter in Python, or use multiple filters
+                # For simplicity and efficiency, get all processes and filter
+                filter_expr = None
+            try:
+                if filter_expr:
+                    out = subprocess.check_output(
+                        ['tasklist', '/FO', 'CSV', '/NH', '/FI', filter_expr],
+                        stderr=subprocess.DEVNULL
+                    )
+                else:
+                    # Get all processes if multiple PIDs needed
+                    out = subprocess.check_output(
+                        ['tasklist', '/FO', 'CSV', '/NH'],
+                        stderr=subprocess.DEVNULL
+                    )
+                txt = out.decode(errors='ignore').strip()
+                if txt:
+                    pid_set = set(pids)
+                    reader = csv.reader(txt.splitlines())
+                    for row in reader:
+                        if len(row) >= 2:
+                            try:
+                                row_pid = int(row[1])
+                                if row_pid in pid_set:
+                                    result[row_pid] = row[0].strip('"')
+                                    if len(result) == len(pids):
+                                        break  # Found all requested PIDs
+                            except (ValueError, IndexError):
+                                continue
+            except Exception:
+                pass
         else:
-            out = subprocess.check_output(['ps', '-p', str(pid), '-o', 'comm='], stderr=subprocess.DEVNULL)
-            return out.decode(errors='ignore').strip()
+            # Unix: for multiple PIDs, could optimize with single ps call
+            # For now, use individual calls (could be improved)
+            for pid in pids:
+                try:
+                    out = subprocess.check_output(
+                        ['ps', '-p', str(pid), '-o', 'comm='],
+                        stderr=subprocess.DEVNULL
+                    )
+                    result[pid] = out.decode(errors='ignore').strip()
+                except Exception:
+                    pass
     except Exception:
-        return ''
+        pass
+
+    return result
+
+
+def _get_proc_name(pid: int) -> str:
+    """Return a best-effort process name for a single PID.
+
+    For efficiency with multiple PIDs, use _get_proc_names() instead.
+    """
+    result = _get_proc_names([pid])
+    return result.get(pid, '')
 
 
 def _win_graceful_close(pid: int) -> bool:
@@ -157,16 +214,27 @@ def execute(argv: List[str]) -> int:
     except Exception:
         signum = _signal_to_int('TERM')
 
+    # Batch lookup process names for all PIDs at once
+    pid_list = []
+    for p in ns.pids:
+        try:
+            pid_list.append(int(p))
+        except Exception:
+            print(f'kill: invalid pid: {p}', file=sys.stderr)
+            continue
+
+    # Batch fetch process names for efficiency
+    proc_names = _get_proc_names(pid_list)
+
     ok = True
     for p in ns.pids:
         try:
             pid = int(p)
         except Exception:
-            print(f'kill: invalid pid: {p}', file=sys.stderr)
             ok = False
             continue
 
-        pname = _get_proc_name(pid)
+        pname = proc_names.get(pid, '')
         protected = pname.lower() in (n.lower() for n in PROTECTED_NAMES)
 
         if protected and not ns.force:
