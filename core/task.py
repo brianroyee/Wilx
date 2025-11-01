@@ -87,19 +87,18 @@ def _parse_schedule(schedule_str: str) -> dict:
     return {'type': 'daily', 'time': '00:00'}
 
 
-def _schedule_task(name: str, command: str, schedule_str: str) -> bool:
-    """Schedule a task using Windows Task Scheduler."""
+def _schedule_task(name: str, command: str, schedule_str: str, tag: str = "user") -> bool:
+    """Schedule a task using Windows Task Scheduler with tag prefix."""
     if os.name != 'nt':
         print('task: Windows-only feature', file=sys.stderr)
         return False
-    
+
     schedule = _parse_schedule(schedule_str)
-    
+    task_name = f"{tag}_{name}"  # prefix tag to task name
+
     try:
-        # Use schtasks.exe to create task
-        # Build schtasks command
-        cmd_parts = ['schtasks', '/Create', '/TN', name, '/TR', command, '/SC']
-        
+        cmd_parts = ['schtasks', '/Create', '/TN', task_name, '/TR', command, '/SC']
+
         if schedule['type'] == 'daily':
             cmd_parts.extend(['DAILY', '/ST', schedule['time']])
         elif schedule['type'] == 'weekly':
@@ -113,37 +112,40 @@ def _schedule_task(name: str, command: str, schedule_str: str) -> bool:
             cmd_parts.extend(['MONTHLY', '/D', str(schedule.get('day', 1)), '/ST', schedule['time']])
         else:
             cmd_parts.extend(['DAILY', '/ST', schedule['time']])
-        
-        # Run without prompting
+
+        # Force creation if it already exists
         cmd_parts.append('/F')
-        
+
         result = subprocess.run(cmd_parts, capture_output=True, text=True, check=False)
         if result.returncode == 0:
-            print(f'task: Scheduled task "{name}" successfully')
+            print(f'task: Scheduled task "{task_name}" successfully')
             return True
         else:
-            print(f'task: Failed to schedule task: {result.stderr}', file=sys.stderr)
+            print(f'task: Failed to schedule task: {result.stderr.strip()}', file=sys.stderr)
             return False
     except Exception as e:
         print(f'task: Error scheduling task: {e}', file=sys.stderr)
         return False
 
 
-def _list_tasks() -> bool:
-    """List all scheduled tasks."""
+def _list_tasks(tag: str = "user") -> bool:
+    """List only tasks created with a specific tag prefix."""
     if os.name != 'nt':
         print('task: Windows-only feature', file=sys.stderr)
         return False
-    
+
     try:
-        result = subprocess.run(['schtasks', '/Query', '/FO', 'LIST'], 
-                              capture_output=True, text=True, check=False)
-        if result.returncode == 0:
-            print(result.stdout)
-            return True
-        else:
+        result = subprocess.run(['schtasks', '/Query', '/FO', 'LIST'],
+                                capture_output=True, text=True, check=False)
+        if result.returncode != 0:
             print(f'task: Failed to list tasks: {result.stderr}', file=sys.stderr)
             return False
+
+        print(f"Tasks tagged with '{tag}':\n")
+        for line in result.stdout.splitlines():
+            if line.startswith("TaskName:") and f"\\{tag}_" in line:
+                print(line)
+        return True
     except Exception as e:
         print(f'task: Error listing tasks: {e}', file=sys.stderr)
         return False
@@ -193,26 +195,30 @@ def execute(args: List[str]) -> int:
     """Execute the task command."""
     parser = argparse.ArgumentParser(prog='task', add_help=False)
     subparsers = parser.add_subparsers(dest='mode', help='Task mode')
-    
+
     schedule_parser = subparsers.add_parser('schedule', help='Schedule tasks')
     schedule_subparsers = schedule_parser.add_subparsers(dest='action', help='Schedule action')
-    
+
+    # ---- ADD ----
     add_parser = schedule_subparsers.add_parser('add', help='Add scheduled task')
     add_parser.add_argument('name', help='Task name')
     add_parser.add_argument('command', help='Command to run')
     add_parser.add_argument('schedule', help='Schedule (e.g., "daily 2am", "weekly sunday 3am")')
-    
-    schedule_subparsers.add_parser('list', help='List scheduled tasks')
-    
+    add_parser.add_argument('--tag', default='user', help='Optional tag prefix for your tasks')
+
+    # ---- REMOVE ----
     remove_parser = schedule_subparsers.add_parser('remove', help='Remove scheduled task')
     remove_parser.add_argument('name', help='Task name')
-    
+
+    # ---- RUN ----
     run_parser = schedule_subparsers.add_parser('run', help='Run task immediately')
     run_parser.add_argument('name', help='Task name')
-    
+
     parser.add_argument('-h', '--help', action='store_true', dest='show_help')
-    
+
+    # --- Parse arguments safely ---
     ns = parser.parse_args(args)
+
     if ns.show_help or not ns.mode:
         parser.print_help()
         print()
@@ -232,34 +238,15 @@ def execute(args: List[str]) -> int:
 
     if ns.mode == 'schedule':
         if ns.action == 'add':
-            if not hasattr(ns, 'name') or not hasattr(ns, 'command') or not hasattr(ns, 'schedule'):
-                print('task: name, command, and schedule required', file=sys.stderr)
-                return 1
-            if _schedule_task(ns.name, ns.command, ns.schedule):
-                return 0
-            else:
-                return 1
+            tag = getattr(ns, 'tag', 'user')
+            return 0 if _schedule_task(ns.name, ns.command, ns.schedule, tag) else 1
         elif ns.action == 'list':
-            if _list_tasks():
-                return 0
-            else:
-                return 1
+            return 0 if _list_tasks() else 1
         elif ns.action == 'remove':
-            if not hasattr(ns, 'name'):
-                print('task: name required', file=sys.stderr)
-                return 1
-            if _remove_task(ns.name):
-                return 0
-            else:
-                return 1
+            return 0 if _remove_task(ns.name) else 1
         elif ns.action == 'run':
-            if not hasattr(ns, 'name'):
-                print('task: name required', file=sys.stderr)
-                return 1
-            if _run_task(ns.name):
-                return 0
-            else:
-                return 1
+            return 0 if _run_task(ns.name) else 1
 
     return 1
+
 
